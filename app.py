@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import time
+import json
+import os
+from io import BytesIO
 import pytz
-import gspread
-from google.oauth2.service_account import Credentials
 
 # إعداد الصفحة
 st.set_page_config(
-    page_title="نظام البصمة",
+    page_title="Siwa_Fingerprint",
     page_icon="🔐",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -152,150 +153,132 @@ st.markdown("""
         direction: rtl;
         text-align: right;
     }
-    
-    /* تنسيق أزرار الدخول والخروج */
-    .action-buttons {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-        margin: 20px 0;
-    }
-    
-    .check-in-btn {
-        background: linear-gradient(45deg, #4facfe, #00f2fe) !important;
-        color: white !important;
-        border: none !important;
-        padding: 20px !important;
-        border-radius: 15px !important;
-        font-size: 1.2rem !important;
-        font-weight: bold !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .check-out-btn {
-        background: linear-gradient(45deg, #ff9472, #f2709c) !important;
-        color: white !important;
-        border: none !important;
-        padding: 20px !important;
-        border-radius: 15px !important;
-        font-size: 1.2rem !important;
-        font-weight: bold !important;
-        transition: all 0.3s ease !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# إعداد Google Sheets
-def init_google_sheets():
-    """تهيئة الاتصال بـ Google Sheets"""
-    try:
-        # استخدام بيانات الاعتماد من Streamlit secrets
-        if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-            # استخدام Service Account
-            service_account_info = {
-                "type": st.secrets["connections"]["gsheets"]["type"],
-                "project_id": st.secrets["connections"]["gsheets"]["project_id"],
-                "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
-                "private_key": st.secrets["connections"]["gsheets"]["private_key"],
-                "client_email": st.secrets["connections"]["gsheets"]["client_email"],
-                "client_id": st.secrets["connections"]["gsheets"]["client_id"],
-                "auth_uri": st.secrets["connections"]["gsheets"]["auth_uri"],
-                "token_uri": st.secrets["connections"]["gsheets"]["token_uri"],
-                "auth_provider_x509_cert_url": st.secrets["connections"]["gsheets"]["auth_provider_x509_cert_url"],
-                "client_x509_cert_url": st.secrets["connections"]["gsheets"]["client_x509_cert_url"]
-            }
-            
-            scope = ['https://spreadsheets.google.com/feeds',
-                    'https://www.googleapis.com/auth/drive']
-            
-            creds = Credentials.from_service_account_info(service_account_info, scopes=scope)
-            client = gspread.authorize(creds)
-            
-            # فتح الشيت
-            spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-            sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
-            spreadsheet = client.open_by_key(sheet_id)
-            worksheet = spreadsheet.sheet1  # أو يمكنك تحديد اسم الشيت المطلوب
-            
-            return worksheet
-        else:
-            st.error("❌ بيانات الاعتماد لـ Google Sheets غير موجودة في secrets.toml")
-            return None
-            
-    except Exception as e:
-        st.error(f"❌ خطأ في الاتصال بـ Google Sheets: {str(e)}")
+# ملف حفظ البيانات
+DATA_FILE = "attendance_data.json"
+
+# تحميل البيانات المحفوظة
+def load_attendance_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # التأكد من وجود حقل action للسجلات القديمة
+                for entry in data:
+                    if 'action' not in entry:
+                        entry['action'] = 'دخول'  # قيمة افتراضية
+                return data
+        except:
+            return []
+    return []
+
+# حفظ البيانات
+def save_attendance_data(data):
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# إنشاء ملف Excel
+def create_excel_file(data):
+    if not data:
         return None
+    
+    df = pd.DataFrame(data)
+    # ترتيب الأعمدة مع إضافة العمليات
+    available_columns = []
+    if 'name' in df.columns:
+        available_columns.append('name')
+    if 'action' in df.columns:
+        available_columns.append('action')
+    if 'date' in df.columns:
+        available_columns.append('date')
+    if 'time' in df.columns:
+        available_columns.append('time')
+    if 'timestamp' in df.columns:
+        available_columns.append('timestamp')
+    
+    df = df[available_columns]
+    
+    # تسمية الأعمدة بالعربية
+    column_names = []
+    for col in available_columns:
+        if col == 'name':
+            column_names.append('الاسم')
+        elif col == 'action':
+            column_names.append('العملية')
+        elif col == 'date':
+            column_names.append('التاريخ')
+        elif col == 'time':
+            column_names.append('الوقت')
+        elif col == 'timestamp':
+            column_names.append('الطابع الزمني')
+    
+    df.columns = column_names
+    
+    # إنشاء ملف Excel في الذاكرة
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='سجل الحضور', index=False)
+        
+        # تنسيق الجدول
+        workbook = writer.book
+        worksheet = writer.sheets['سجل الحضور']
+        
+        # تنسيق الهيدر
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#667eea',
+            'font_color': 'white',
+            'border': 1
+        })
+        
+        # تطبيق التنسيق على الهيدر
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+        
+        # ضبط عرض الأعمدة
+        worksheet.set_column('A:A', 15)  # الاسم
+        if len(available_columns) > 1:
+            worksheet.set_column('B:B', 10)  # العملية
+        if len(available_columns) > 2:
+            worksheet.set_column('C:C', 15)  # التاريخ
+        if len(available_columns) > 3:
+            worksheet.set_column('D:D', 15)  # الوقت
+        if len(available_columns) > 4:
+            worksheet.set_column('E:E', 20)  # الطابع الزمني
+    
+    output.seek(0)
+    return output
 
 # إعداد التوقيت المحلي للإسكندرية
 ALEXANDRIA_TZ = pytz.timezone('Africa/Cairo')
 
 def get_local_time():
     """الحصول على التوقيت المحلي للإسكندرية"""
+    # الحصول على التوقيت العالمي ثم تحويله للتوقيت المحلي
     utc_time = datetime.utcnow()
     utc_time = pytz.utc.localize(utc_time)
     local_time = utc_time.astimezone(ALEXANDRIA_TZ)
     return local_time
 
-def add_to_google_sheet(worksheet, name, action, timestamp):
-    """إضافة سجل جديد إلى Google Sheets"""
-    try:
-        now = get_local_time()
-        row = [
-            name,
-            action,  # "دخول" أو "خروج"
-            now.strftime("%Y-%m-%d"),
-            now.strftime("%H:%M:%S"),
-            now.strftime("%I:%M:%S %p"),
-            timestamp
-        ]
-        worksheet.append_row(row)
-        return True
-    except Exception as e:
-        st.error(f"❌ خطأ في إضافة البيانات: {str(e)}")
-        return False
-
-def get_data_from_google_sheet(worksheet):
-    """جلب البيانات من Google Sheets"""
-    try:
-        data = worksheet.get_all_records()
-        return data
-    except Exception as e:
-        st.error(f"❌ خطأ في جلب البيانات: {str(e)}")
-        return []
-
-def setup_google_sheet_headers(worksheet):
-    """إعداد عناوين الأعمدة في Google Sheets"""
-    try:
-        # التحقق من وجود العناوين
-        if worksheet.row_count == 0 or not worksheet.row_values(1):
-            headers = ['الاسم', 'النوع', 'التاريخ', 'الوقت_24', 'الوقت_12', 'الطابع_الزمني']
-            worksheet.insert_row(headers, 1)
-            return True
-    except Exception as e:
-        st.warning(f"تنبيه: {str(e)}")
-        return False
-
 # تهيئة البيانات في الجلسة
+if 'attendance_log' not in st.session_state:
+    st.session_state.attendance_log = load_attendance_data()
+
 if 'selected_user' not in st.session_state:
     st.session_state.selected_user = None
 
 if 'scanning' not in st.session_state:
     st.session_state.scanning = False
 
-if 'last_action' not in st.session_state:
-    st.session_state.last_action = {}
-
-# تهيئة Google Sheets
-worksheet = init_google_sheets()
-
-if worksheet:
-    setup_google_sheet_headers(worksheet)
-
 # العنوان الرئيسي
-st.markdown('<div class="rtl main-title">🔐 نظام البصمة</div>', unsafe_allow_html=True)
+st.markdown('<div class="rtl main-title">🔐 Siwa_Fingerprint</div>', unsafe_allow_html=True)
 
 # قائمة الأشخاص
-users = ["Amr", "Rana", "Farida Ahmed", "Hadel", "Fatma", "Farida Muhammed"]
+users = ["Amr", "Rana", "Farida Ahmed", "Hadel", "Fatma","Farida Muhammed"]
 
 # اختيار الشخص
 st.markdown('<div class="rtl"><h3>اختر الشخص:</h3></div>', unsafe_allow_html=True)
@@ -308,33 +291,39 @@ for i, user in enumerate(users):
             st.success(f"تم اختيار: {user}")
             st.rerun()
 
-# عرض الشخص المختار
+# عرض الشخص المختار مع آخر عملية
 if st.session_state.selected_user:
-    st.markdown(f'<div class="rtl success-message">الشخص المختار: {st.session_state.selected_user}</div>', 
-                unsafe_allow_html=True)
+    # البحث عن آخر عملية للمستخدم
+    user_records = [entry for entry in st.session_state.attendance_log 
+                   if entry.get('name') == st.session_state.selected_user]
     
-    # عرض آخر عملية للمستخدم المختار
-    if worksheet:
-        try:
-            data = get_data_from_google_sheet(worksheet)
-            user_records = [record for record in data if record.get('الاسم') == st.session_state.selected_user]
-            if user_records:
-                last_record = user_records[-1]
-                last_action = last_record.get('النوع', '')
-                last_time = last_record.get('الوقت_12', '')
-                
-                if last_action == 'دخول':
-                    st.info(f"📍 آخر عملية: دخول في {last_time}")
-                    recommended_action = "خروج"
-                else:
-                    st.info(f"📍 آخر عملية: خروج في {last_time}")
-                    recommended_action = "دخول"
-                
-                st.session_state.last_action[st.session_state.selected_user] = last_action
-            else:
-                recommended_action = "دخول"
-        except:
-            recommended_action = "دخول"
+    if user_records:
+        last_record = user_records[0]  # أول سجل (الأحدث)
+        last_action = last_record.get('action', 'دخول')
+        last_time = last_record.get('time', last_record.get('time_24', 'غير محدد'))
+        
+        if last_action == 'دخول':
+            next_action = "خروج"
+            status_icon = "🟢"
+        else:
+            next_action = "دخول"
+            status_icon = "🔴"
+        
+        st.markdown(f"""
+        <div class="rtl success-message">
+            الشخص المختار: {st.session_state.selected_user}<br>
+            {status_icon} آخر عملية: {last_action} في {last_time}<br>
+            💡 العملية التالية المقترحة: <strong>{next_action}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="rtl success-message">
+            الشخص المختار: {st.session_state.selected_user}<br>
+            📋 لا توجد سجلات سابقة<br>
+            💡 العملية التالية المقترحة: <strong>دخول</strong>
+        </div>
+        """, unsafe_allow_html=True)
 
 # قسم البصمة
 st.markdown('<div class="rtl"><h3>📱 تسجيل الحضور:</h3></div>', unsafe_allow_html=True)
@@ -344,128 +333,170 @@ if st.session_state.selected_user:
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🟢 تسجيل دخول", key="check_in", help="تسجيل دخول إلى العمل"):
-            if worksheet:
-                st.session_state.scanning = True
-                with st.spinner("🔍 جاري تسجيل الدخول..."):
-                    time.sleep(2)
-                
-                now = get_local_time()
-                success = add_to_google_sheet(
-                    worksheet, 
-                    st.session_state.selected_user, 
-                    "دخول", 
-                    now.timestamp()
-                )
-                
-                if success:
-                    st.success(f"✅ تم تسجيل دخول: {st.session_state.selected_user}")
-                    st.balloons()
-                else:
-                    st.error("❌ فشل في تسجيل الدخول")
-                
-                st.session_state.selected_user = None
-                st.session_state.scanning = False
-                st.rerun()
+        if st.button("🟢 تسجيل دخول", key="check_in"):
+            # بدء المسح
+            st.session_state.scanning = True
+            with st.spinner("🔍 جاري تسجيل الدخول..."):
+                time.sleep(2)  # محاكاة وقت المسح
+            
+            # تسجيل الدخول
+            now = get_local_time()
+            entry = {
+                'name': st.session_state.selected_user,
+                'action': 'دخول',
+                'time': now.strftime("%I:%M:%S %p"),
+                'time_24': now.strftime("%H:%M:%S"),
+                'date': now.strftime("%Y-%m-%d"),
+                'date_arabic': now.strftime("%d/%m/%Y"),
+                'timestamp': now.timestamp()
+            }
+            
+            st.session_state.attendance_log.insert(0, entry)
+            save_attendance_data(st.session_state.attendance_log)
+            
+            st.success(f"✅ تم تسجيل دخول: {st.session_state.selected_user}")
+            st.balloons()
+            st.session_state.selected_user = None
+            st.session_state.scanning = False
+            st.rerun()
     
     with col2:
-        if st.button("🔴 تسجيل خروج", key="check_out", help="تسجيل خروج من العمل"):
-            if worksheet:
-                st.session_state.scanning = True
-                with st.spinner("🔍 جاري تسجيل الخروج..."):
-                    time.sleep(2)
-                
-                now = get_local_time()
-                success = add_to_google_sheet(
-                    worksheet, 
-                    st.session_state.selected_user, 
-                    "خروج", 
-                    now.timestamp()
-                )
-                
-                if success:
-                    st.success(f"✅ تم تسجيل خروج: {st.session_state.selected_user}")
-                else:
-                    st.error("❌ فشل في تسجيل الخروج")
-                
-                st.session_state.selected_user = None
-                st.session_state.scanning = False
-                st.rerun()
+        if st.button("🔴 تسجيل خروج", key="check_out"):
+            # بدء المسح
+            st.session_state.scanning = True
+            with st.spinner("🔍 جاري تسجيل الخروج..."):
+                time.sleep(2)  # محاكاة وقت المسح
+            
+            # تسجيل الخروج
+            now = get_local_time()
+            entry = {
+                'name': st.session_state.selected_user,
+                'action': 'خروج',
+                'time': now.strftime("%I:%M:%S %p"),
+                'time_24': now.strftime("%H:%M:%S"),
+                'date': now.strftime("%Y-%m-%d"),
+                'date_arabic': now.strftime("%d/%m/%Y"),
+                'timestamp': now.timestamp()
+            }
+            
+            st.session_state.attendance_log.insert(0, entry)
+            save_attendance_data(st.session_state.attendance_log)
+            
+            st.success(f"✅ تم تسجيل خروج: {st.session_state.selected_user}")
+            st.session_state.selected_user = None
+            st.session_state.scanning = False
+            st.rerun()
 else:
     st.warning("⚠️ من فضلك اختر الشخص أولاً")
 
 # سجل الحضور
 st.markdown('<div class="rtl"><h3>📋 سجل الحضور:</h3></div>', unsafe_allow_html=True)
 
-if worksheet:
-    try:
-        attendance_data = get_data_from_google_sheet(worksheet)
-        
-        if attendance_data:
-            # عرض آخر 10 سجلات
-            recent_logs = attendance_data[-10:] if len(attendance_data) > 10 else attendance_data
-            recent_logs.reverse()  # عرض الأحدث أولاً
-            
-            for entry in recent_logs:
-                name = entry.get('الاسم', 'غير محدد')
-                action = entry.get('النوع', 'غير محدد')
-                date = entry.get('التاريخ', 'غير محدد')
-                time_12 = entry.get('الوقت_12', entry.get('الوقت_24', 'غير محدد'))
-                
-                action_class = "check-in" if action == "دخول" else "check-out"
-                action_icon = "🟢" if action == "دخول" else "🔴"
-                
-                st.markdown(f"""
-                <div class="rtl log-entry {action_class}">
-                    <div style="font-weight: bold; font-size: 1.1rem;">{action_icon} {name} - {action}</div>
-                    <div style="opacity: 0.9;">{date} - {time_12}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # إحصائيات سريعة
-            st.markdown("### 📊 الإحصائيات:")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("إجمالي السجلات", len(attendance_data))
-            
-            with col2:
-                today = get_local_time().strftime("%Y-%m-%d")
-                today_count = len([entry for entry in attendance_data if entry.get('التاريخ') == today])
-                st.metric("سجلات اليوم", today_count)
-            
-            with col3:
-                unique_users = len(set(entry.get('الاسم', '') for entry in attendance_data if entry.get('الاسم')))
-                st.metric("الأشخاص", unique_users)
-            
-            with col4:
-                check_ins_today = len([entry for entry in attendance_data 
-                                     if entry.get('التاريخ') == today and entry.get('النوع') == 'دخول'])
-                st.metric("دخول اليوم", check_ins_today)
-            
-            # عرض الجدول التفصيلي
-            if st.checkbox("عرض الجدول التفصيلي"):
-                df = pd.DataFrame(attendance_data)
-                if not df.empty:
-                    # ترتيب الأعمدة
-                    cols_order = ['الاسم', 'النوع', 'التاريخ', 'الوقت_12']
-                    available_cols = [col for col in cols_order if col in df.columns]
-                    df_display = df[available_cols].copy()
-                    st.dataframe(df_display, use_container_width=True)
-            
-            # رابط Google Sheets
-            if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-                sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                st.markdown(f"### 🔗 [فتح Google Sheet]({sheet_url})")
-        
-        else:
-            st.info("📝 لا توجد سجلات حضور بعد")
+if st.session_state.attendance_log:
+    # عرض آخر 10 سجلات
+    recent_logs = st.session_state.attendance_log[:10]
     
-    except Exception as e:
-        st.error(f"❌ خطأ في عرض البيانات: {str(e)}")
+    for entry in recent_logs:
+        name = entry.get('name', 'غير محدد')
+        action = entry.get('action', 'دخول')
+        date_display = entry.get('date_arabic', entry.get('date', 'غير محدد'))
+        time_display = entry.get('time', entry.get('time_24', 'غير محدد'))
+        
+        # تحديد اللون والأيقونة حسب نوع العملية
+        action_class = "check-in" if action == "دخول" else "check-out"
+        action_icon = "🟢" if action == "دخول" else "🔴"
+        
+        st.markdown(f"""
+        <div class="rtl log-entry {action_class}">
+            <div style="font-weight: bold; font-size: 1.1rem;">{action_icon} {name} - {action}</div>
+            <div style="opacity: 0.9;">{date_display} - {time_display}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # إحصائيات سريعة
+    st.markdown("### 📊 الإحصائيات:")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("إجمالي السجلات", len(st.session_state.attendance_log))
+    
+    with col2:
+        today = get_local_time().strftime("%Y-%m-%d")
+        today_count = len([entry for entry in st.session_state.attendance_log if entry.get('date') == today])
+        st.metric("سجلات اليوم", today_count)
+    
+    with col3:
+        # عدد الأشخاص الفريدين
+        unique_users = len(set(entry.get('name', '') for entry in st.session_state.attendance_log))
+        st.metric("الأشخاص", unique_users)
+    
+    with col4:
+        # عدد مرات الدخول اليوم
+        check_ins_today = len([entry for entry in st.session_state.attendance_log 
+                              if entry.get('date') == today and entry.get('action') == 'دخول'])
+        st.metric("دخول اليوم", check_ins_today)
+    
+    # أزرار الإدارة
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # تحميل Excel
+        if st.button("📥 تحميل Excel"):
+            excel_file = create_excel_file(st.session_state.attendance_log)
+            if excel_file:
+                st.download_button(
+                    label="تحميل ملف Excel",
+                    data=excel_file,
+                    file_name=f"attendance_log_{get_local_time().strftime('%Y-%m-%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.error("لا توجد بيانات للتحميل")
+    
+    with col2:
+        # مسح السجل
+        if st.button("🗑️ مسح السجل"):
+            if st.session_state.attendance_log:
+                st.session_state.attendance_log = []
+                save_attendance_data([])
+                st.success("🗑️ تم مسح السجل بنجاح")
+                st.rerun()
+            else:
+                st.error("📝 السجل فارغ بالفعل")
+
+    # عرض الجدول التفصيلي
+    if st.checkbox("عرض الجدول التفصيلي"):
+        df = pd.DataFrame(st.session_state.attendance_log)
+        # اختيار الأعمدة المناسبة
+        display_columns = []
+        column_names = []
+        
+        if 'name' in df.columns:
+            display_columns.append('name')
+            column_names.append('الاسم')
+        
+        if 'action' in df.columns:
+            display_columns.append('action')
+            column_names.append('العملية')
+        
+        if 'date_arabic' in df.columns:
+            display_columns.append('date_arabic')
+            column_names.append('التاريخ')
+        elif 'date' in df.columns:
+            display_columns.append('date')
+            column_names.append('التاريخ')
+        
+        if 'time' in df.columns:
+            display_columns.append('time')
+            column_names.append('الوقت')
+        
+        if display_columns:
+            df_display = df[display_columns].copy()
+            df_display.columns = column_names
+            st.dataframe(df_display, use_container_width=True)
 
 else:
-    st.error("❌ لا يمكن الاتصال بـ Google Sheets. تأكد من إعداد بيانات الاعتماد.")
+    st.info("📝 لا توجد سجلات حضور بعد")
 
 # معلومات إضافية في الشريط الجانبي
 with st.sidebar:
@@ -473,15 +504,15 @@ with st.sidebar:
     st.info("""
     **نظام البصمة الذكي**
     
-    ✅ تسجيل دخول وخروج
+    ✅ تسجيل دخول وخروج منفصل
     
-    ✅ حفظ في Google Sheets
+    ✅ حفظ البيانات تلقائياً
+    
+    ✅ تصدير إلى Excel
     
     ✅ إحصائيات فورية
     
-    ✅ واجهة عربية جميلة
-    
-    ✅ متابعة لحظية
+    ✅ واجهة عربية
     
     🕐 التوقيت: الإسكندرية
     """)
@@ -493,31 +524,12 @@ with st.sidebar:
     st.markdown(f"🕐 {current_time.strftime('%I:%M:%S %p')}")
     st.markdown(f"🌍 المنطقة الزمنية: {current_time.tzinfo}")
     
-    # إضافة زر تحديث
-    if st.button("🔄 تحديث البيانات"):
-        st.cache_data.clear()
+    # إضافة زر تحديث الوقت
+    if st.button("🔄 تحديث الوقت"):
         st.rerun()
-    
-    # معلومات الإعداد
-    st.markdown("### ⚙️ إعداد Google Sheets")
-    if worksheet:
-        st.success("✅ متصل بـ Google Sheets")
-    else:
-        st.error("❌ غير متصل بـ Google Sheets")
-        st.markdown("""
-        **لإعداد الاتصال:**
-        1. أنشئ Service Account في Google Cloud
-        2. أضف البيانات إلى secrets.toml
-        3. شارك الشيت مع Service Account
-        """)
 
 # رسالة ترحيب للمستخدمين الجدد
-if worksheet and 'welcome_shown' not in st.session_state:
-    try:
-        data = get_data_from_google_sheet(worksheet)
-        if not data:
-            st.balloons()
-            st.success("🎉 مرحباً بك في نظام البصمة المحدث!")
-    except:
-        pass
+if not st.session_state.attendance_log and 'welcome_shown' not in st.session_state:
+    st.balloons()
+    st.success("🎉 مرحباً بك في نظام البصمة!")
     st.session_state.welcome_shown = True
