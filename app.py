@@ -350,7 +350,7 @@ if 'scanning' not in st.session_state:
 st.markdown('<div class="rtl main-title">🔐 Siwa_Fingerprint</div>', unsafe_allow_html=True)
 
 # قائمة الأشخاص
-users = ["Amr", "Rana", "Farida Ahmed", "Hadel", "Fatma","Farida Muhammed"]
+users = ["Aya Ezz","Nourhan","Dalia","Rehab","Rodaina","Zahra"]
 
 # اختيار الشخص
 st.markdown('<div class="rtl"><h3>اختر الشخص:</h3></div>', unsafe_allow_html=True)
