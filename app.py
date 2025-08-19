@@ -184,37 +184,53 @@ def create_excel_file(data):
     if not data:
         return None
     
-    df = pd.DataFrame(data)
-    # ترتيب الأعمدة مع إضافة العمليات
-    available_columns = []
-    if 'name' in df.columns:
-        available_columns.append('name')
-    if 'action' in df.columns:
-        available_columns.append('action')
-    if 'date' in df.columns:
-        available_columns.append('date')
-    if 'time' in df.columns:
-        available_columns.append('time')
-    if 'timestamp' in df.columns:
-        available_columns.append('timestamp')
+    # تحويل البيانات لتنسيق الدخول والخروج في أعمدة منفصلة
+    processed_data = {}
     
-    df = df[available_columns]
+    for entry in data:
+        name = entry.get('name', 'غير محدد')
+        date = entry.get('date', 'غير محدد')
+        action = entry.get('action', 'دخول')
+        time = entry.get('time', entry.get('time_24', 'غير محدد'))
+        date_arabic = entry.get('date_arabic', date)
+        
+        # إنشاء مفتاح فريد للشخص والتاريخ
+        key = f"{name}_{date}"
+        
+        if key not in processed_data:
+            processed_data[key] = {
+                'الاسم': name,
+                'التاريخ': date_arabic,
+                'دخول': '',
+                'خروج': '',
+                'تاريخ_ترتيب': date
+            }
+        
+        # إضافة الوقت حسب نوع العملية
+        if action == 'دخول':
+            if processed_data[key]['دخول'] == '':
+                processed_data[key]['دخول'] = time
+            else:
+                # إذا كان هناك دخول مسجل بالفعل، أضف رقم
+                processed_data[key]['دخول'] += f" / {time}"
+        elif action == 'خروج':
+            if processed_data[key]['خروج'] == '':
+                processed_data[key]['خروج'] = time
+            else:
+                # إذا كان هناك خروج مسجل بالفعل، أضف رقم
+                processed_data[key]['خروج'] += f" / {time}"
     
-    # تسمية الأعمدة بالعربية
-    column_names = []
-    for col in available_columns:
-        if col == 'name':
-            column_names.append('الاسم')
-        elif col == 'action':
-            column_names.append('العملية')
-        elif col == 'date':
-            column_names.append('التاريخ')
-        elif col == 'time':
-            column_names.append('الوقت')
-        elif col == 'timestamp':
-            column_names.append('الطابع الزمني')
+    # تحويل إلى DataFrame
+    df_data = list(processed_data.values())
+    df = pd.DataFrame(df_data)
     
-    df.columns = column_names
+    # ترتيب حسب التاريخ (الأحدث أولاً)
+    if 'تاريخ_ترتيب' in df.columns:
+        df = df.sort_values('تاريخ_ترتيب', ascending=False)
+        df = df.drop('تاريخ_ترتيب', axis=1)
+    
+    # ترتيب الأعمدة
+    df = df[['الاسم', 'التاريخ', 'دخول', 'خروج']]
     
     # إنشاء ملف Excel في الذاكرة
     output = BytesIO()
@@ -240,18 +256,74 @@ def create_excel_file(data):
             worksheet.write(0, col_num, value, header_format)
         
         # ضبط عرض الأعمدة
-        worksheet.set_column('A:A', 15)  # الاسم
-        if len(available_columns) > 1:
-            worksheet.set_column('B:B', 10)  # العملية
-        if len(available_columns) > 2:
-            worksheet.set_column('C:C', 15)  # التاريخ
-        if len(available_columns) > 3:
-            worksheet.set_column('D:D', 15)  # الوقت
-        if len(available_columns) > 4:
-            worksheet.set_column('E:E', 20)  # الطابع الزمني
+        worksheet.set_column('A:A', 20)  # الاسم
+        worksheet.set_column('B:B', 15)  # التاريخ
+        worksheet.set_column('C:C', 15)  # دخول
+        worksheet.set_column('D:D', 15)  # خروج
+        
+        # تنسيق خاص للخلايا
+        cell_format = workbook.add_format({
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1
+        })
+        
+        # تطبيق التنسيق على البيانات
+        for row_num in range(1, len(df) + 1):
+            for col_num in range(len(df.columns)):
+                worksheet.write(row_num, col_num, df.iloc[row_num-1, col_num], cell_format)
     
     output.seek(0)
     return output
+
+# إنشاء ملف CSV بتنسيق الأعمدة المنفصلة
+def create_csv_file(data):
+    if not data:
+        return None
+    
+    # استخدام نفس منطق Excel لمعالجة البيانات
+    processed_data = {}
+    
+    for entry in data:
+        name = entry.get('name', 'غير محدد')
+        date = entry.get('date', 'غير محدد')
+        action = entry.get('action', 'دخول')
+        time = entry.get('time', entry.get('time_24', 'غير محدد'))
+        date_arabic = entry.get('date_arabic', date)
+        
+        key = f"{name}_{date}"
+        
+        if key not in processed_data:
+            processed_data[key] = {
+                'الاسم': name,
+                'التاريخ': date_arabic,
+                'دخول': '',
+                'خروج': '',
+                'تاريخ_ترتيب': date
+            }
+        
+        if action == 'دخول':
+            if processed_data[key]['دخول'] == '':
+                processed_data[key]['دخول'] = time
+            else:
+                processed_data[key]['دخول'] += f" / {time}"
+        elif action == 'خروج':
+            if processed_data[key]['خروج'] == '':
+                processed_data[key]['خروج'] = time
+            else:
+                processed_data[key]['خروج'] += f" / {time}"
+    
+    # تحويل إلى DataFrame
+    df_data = list(processed_data.values())
+    df = pd.DataFrame(df_data)
+    
+    if 'تاريخ_ترتيب' in df.columns:
+        df = df.sort_values('تاريخ_ترتيب', ascending=False)
+        df = df.drop('تاريخ_ترتيب', axis=1)
+    
+    df = df[['الاسم', 'التاريخ', 'دخول', 'خروج']]
+    
+    return df.to_csv(index=False).encode('utf-8-sig')
 
 # إعداد التوقيت المحلي للإسكندرية
 ALEXANDRIA_TZ = pytz.timezone('Africa/Cairo')
@@ -437,7 +509,7 @@ if st.session_state.attendance_log:
         st.metric("دخول اليوم", check_ins_today)
     
     # أزرار الإدارة
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         # تحميل Excel
@@ -454,6 +526,20 @@ if st.session_state.attendance_log:
                 st.error("لا توجد بيانات للتحميل")
     
     with col2:
+        # تحميل CSV
+        if st.button("📄 تحميل CSV"):
+            csv_file = create_csv_file(st.session_state.attendance_log)
+            if csv_file:
+                st.download_button(
+                    label="تحميل ملف CSV",
+                    data=csv_file,
+                    file_name=f"attendance_log_{get_local_time().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.error("لا توجد بيانات للتحميل")
+    
+    with col3:
         # مسح السجل
         if st.button("🗑️ مسح السجل"):
             if st.session_state.attendance_log:
@@ -466,33 +552,52 @@ if st.session_state.attendance_log:
 
     # عرض الجدول التفصيلي
     if st.checkbox("عرض الجدول التفصيلي"):
-        df = pd.DataFrame(st.session_state.attendance_log)
-        # اختيار الأعمدة المناسبة
-        display_columns = []
-        column_names = []
+        # إنشاء جدول منظم مثل Excel
+        processed_data = {}
         
-        if 'name' in df.columns:
-            display_columns.append('name')
-            column_names.append('الاسم')
+        for entry in st.session_state.attendance_log:
+            name = entry.get('name', 'غير محدد')
+            date = entry.get('date', 'غير محدد')
+            action = entry.get('action', 'دخول')
+            time = entry.get('time', entry.get('time_24', 'غير محدد'))
+            date_arabic = entry.get('date_arabic', date)
+            
+            # إنشاء مفتاح فريد للشخص والتاريخ
+            key = f"{name}_{date}"
+            
+            if key not in processed_data:
+                processed_data[key] = {
+                    'الاسم': name,
+                    'التاريخ': date_arabic,
+                    'دخول': '',
+                    'خروج': '',
+                    'تاريخ_ترتيب': date
+                }
+            
+            # إضافة الوقت حسب نوع العملية
+            if action == 'دخول':
+                if processed_data[key]['دخول'] == '':
+                    processed_data[key]['دخول'] = time
+                else:
+                    processed_data[key]['دخول'] += f" / {time}"
+            elif action == 'خروج':
+                if processed_data[key]['خروج'] == '':
+                    processed_data[key]['خروج'] = time
+                else:
+                    processed_data[key]['خروج'] += f" / {time}"
         
-        if 'action' in df.columns:
-            display_columns.append('action')
-            column_names.append('العملية')
-        
-        if 'date_arabic' in df.columns:
-            display_columns.append('date_arabic')
-            column_names.append('التاريخ')
-        elif 'date' in df.columns:
-            display_columns.append('date')
-            column_names.append('التاريخ')
-        
-        if 'time' in df.columns:
-            display_columns.append('time')
-            column_names.append('الوقت')
-        
-        if display_columns:
-            df_display = df[display_columns].copy()
-            df_display.columns = column_names
+        # تحويل إلى DataFrame
+        if processed_data:
+            df_data = list(processed_data.values())
+            df_display = pd.DataFrame(df_data)
+            
+            # ترتيب حسب التاريخ (الأحدث أولاً)
+            df_display = df_display.sort_values('تاريخ_ترتيب', ascending=False)
+            df_display = df_display.drop('تاريخ_ترتيب', axis=1)
+            
+            # ترتيب الأعمدة
+            df_display = df_display[['الاسم', 'التاريخ', 'دخول', 'خروج']]
+            
             st.dataframe(df_display, use_container_width=True)
 
 else:
@@ -508,7 +613,9 @@ with st.sidebar:
     
     ✅ حفظ البيانات تلقائياً
     
-    ✅ تصدير إلى Excel
+    ✅ تصدير Excel/CSV منظم
+    
+    ✅ أعمدة منفصلة للدخول والخروج
     
     ✅ إحصائيات فورية
     
